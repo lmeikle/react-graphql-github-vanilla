@@ -34,8 +34,13 @@ const GET_ISSUES_OF_REPOSITORY = `
       name
       url
       repository(name: $repository) {
+        id
         name
         url
+        stargazers {
+          totalCount
+        }
+        viewerHasStarred
         issues(first: 5, after: $endCursor, states: [OPEN]) {
           edges {
             node {
@@ -63,12 +68,36 @@ const GET_ISSUES_OF_REPOSITORY = `
   }
 `;
 
-const Repository = ({ repository, onFetchMoreIssues }) => (
+const ADD_STAR = `
+  mutation ($repositoryId: ID!) {
+    addStar(input:{starrableId:$repositoryId}) {
+      starrable {
+        viewerHasStarred
+      }
+    }
+  }
+`;
+
+const REMOVE_STAR = `
+  mutation ($repositoryId: ID!) {
+    removeStar(input:{starrableId:$repositoryId}) {
+      starrable {
+        viewerHasStarred
+      }
+    }
+  }
+`;
+
+const Repository = ({ repository, onFetchMoreIssues, onStarRepository }) => (
   <div>
     <p>
       <strong>In Repository:</strong>
       <a href={repository.url}>{repository.name}</a>
     </p>
+    <button type="button" onClick={() => onStarRepository(repository.id, repository.viewerHasStarred)}>
+      {repository.viewerHasStarred ? 'Unstar ' : 'Star '}
+      {repository.stargazers.totalCount}
+    </button>
     <ul>
       {repository.issues.edges.map((issue) => (
         <li key={issue.node.id}>
@@ -86,7 +115,7 @@ const Repository = ({ repository, onFetchMoreIssues }) => (
   </div>
 );
 
-const Organization = ({ organization, errors, onFetchMoreIssues }) => {
+const Organization = ({ organization, errors, onFetchMoreIssues, onStarRepository }) => {
   if (errors) {
     return (
       <div>
@@ -103,7 +132,11 @@ const Organization = ({ organization, errors, onFetchMoreIssues }) => {
       <p>
         <strong>Issues from Organization:</strong>
         <a href={organization.url}>{organization.name}</a>
-        <Repository repository={organization.repository} onFetchMoreIssues={onFetchMoreIssues} />
+        <Repository
+          repository={organization.repository}
+          onFetchMoreIssues={onFetchMoreIssues}
+          onStarRepository={onStarRepository}
+        />
       </p>
     </div>
   );
@@ -130,12 +163,6 @@ class App extends Component {
 
     axiosGitHubGraphQL
       .post('', { query: GET_ISSUES_OF_REPOSITORY, variables: { organization, repository, endCursor } })
-      /*.then((result) => {
-        this.setState(() => ({
-          organization: result.data.data.organization,
-          errors: result.data.errors,
-        }));
-      });*/
       .then((result) => {
         const { data, errors } = result.data;
 
@@ -170,6 +197,55 @@ class App extends Component {
 
     this.onFetchFromGitHub(this.state.path, endCursor);
   };
+  onStarRepository = (repositoryId, viewerHasStarred) => {
+    if (viewerHasStarred) {
+      return axiosGitHubGraphQL
+        .post('', {
+          query: REMOVE_STAR,
+          variables: { repositoryId },
+        })
+        .then((result) => {
+          const { viewerHasStarred } = result.data.data.removeStar.starrable;
+
+          this.setState((s) => ({
+            ...s,
+            organization: {
+              ...s.organization,
+              repository: {
+                ...s.organization.repository,
+                stargazers: {
+                  totalCount: s.organization.repository.stargazers.totalCount - 1,
+                },
+                viewerHasStarred,
+              },
+            },
+          }));
+        });
+    }
+
+    return axiosGitHubGraphQL
+      .post('', {
+        query: ADD_STAR,
+        variables: { repositoryId },
+      })
+      .then((result) => {
+        const { viewerHasStarred } = result.data.data.addStar.starrable;
+
+        this.setState((s) => ({
+          ...s,
+          organization: {
+            ...s.organization,
+            repository: {
+              ...s.organization.repository,
+              stargazers: {
+                totalCount: s.organization.repository.stargazers.totalCount + 1,
+              },
+              viewerHasStarred,
+            },
+          },
+        }));
+      });
+  };
 
   render() {
     const { path, organization, errors } = this.state;
@@ -184,7 +260,12 @@ class App extends Component {
         </form>
         <hr />
         {organization ? (
-          <Organization organization={organization} errors={errors} onFetchMoreIssues={this.onFetchMoreIssues} />
+          <Organization
+            organization={organization}
+            errors={errors}
+            onFetchMoreIssues={this.onFetchMoreIssues}
+            onStarRepository={this.onStarRepository}
+          />
         ) : (
           <p>No information yet ...</p>
         )}
